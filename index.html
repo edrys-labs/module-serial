@@ -1,172 +1,205 @@
 <!DOCTYPE html>
 <html lang="en">
-
-<head>
+  <head>
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <meta name="description" content="A WebSerial module for live serial comms with stations" />
+    <meta
+      name="description"
+      content="A WebSerial module for live serial comms with stations"
+    />
     <meta name="show-in" content="station" />
     <title>Live WebSerial</title>
 
     <script src="https://edrys-labs.github.io/module/edrys.js"></script>
 
-    <script defer src="https://edrys-labs.github.io/module/vendor/alpine.min.js"></script>
-    <link rel="stylesheet" href="https://edrys-labs.github.io/module/vendor/water.min.css" />
-    <link rel="stylesheet" href="https://edrys-labs.github.io/module/vendor/open-iconic/css/open-iconic.min.css" />
+    <script
+      defer
+      src="https://edrys-labs.github.io/module/vendor/alpine.min.js"
+    ></script>
+    <link
+      rel="stylesheet"
+      href="https://edrys-labs.github.io/module/vendor/water.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://edrys-labs.github.io/module/vendor/open-iconic/css/open-iconic.min.css"
+    />
 
     <script src="./xterm/xterm.min.js"></script>
-    <link rel="stylesheet" href="./xterm/xterm.min.css">
-</head>
+    <link rel="stylesheet" href="./xterm/xterm.min.css" />
+  </head>
 
-<body>
-    <template x-if="!!edrys" x-data="{ edrys: undefined }"
-        x-init="async e => { Edrys.onUpdate((e) => { edrys = {...e} }) }">
-        <div x-show="edrys.role == 'station'"
-            x-data="{ baudRate: edrys.module.config.baud || edrys.getItem('baud') || 9600, ready: false }"
-            x-effect="e => { edrys.setItem('baud', baudRate) }">
-            <div x-show="!ready">
-                <label for="baud" style="float: left; padding: 10px">Baud Rate:</label>
-                <button style="float: right"
-                    @click="async (e) => { ready = await serial_connect(baudRate, true); }">Connect</button>
-                <select id="baud" x-model="baudRate">
-                    <option value="1200">1200</option>
-                    <option value="2400">2400</option>
-                    <option value="4800">4800</option>
-                    <option value="9600">9600</option>
-                    <option value="19200">19200</option>
-                    <option value="38400">38400</option>
-                    <option value="57600">57600</option>
-                    <option value="115200">115200</option>
-                </select>
-            </div>
-            <div x-show="ready">
-                <button style="z-index: 100; position: absolute; right: 5px; top: 5px;"
-                    @click="async (e) => { await serial_close(); }">Disconnect</button>
-            </div>
+  <body>
+    <template
+      x-if="!!edrys"
+      x-data="{ edrys: undefined }"
+      x-init="async e => { Edrys.onUpdate((e) => { edrys = {...e} }) }"
+    >
+      <div
+        x-show="edrys.role == 'station'"
+        x-data="{ baudRate: edrys.module.config.baud || edrys.getItem('baud') || 9600, ready: false }"
+        x-effect="e => { edrys.setItem('baud', baudRate) }"
+      >
+        <div x-show="!ready">
+          <label for="baud" style="float: left; padding: 10px"
+            >Baud Rate:</label
+          >
+          <button
+            style="float: right"
+            @click="async (e) => { ready = await serial_connect(baudRate, true); }"
+          >
+            Connect
+          </button>
+          <select id="baud" x-model="baudRate">
+            <option value="1200">1200</option>
+            <option value="2400">2400</option>
+            <option value="4800">4800</option>
+            <option value="9600">9600</option>
+            <option value="19200">19200</option>
+            <option value="38400">38400</option>
+            <option value="57600">57600</option>
+            <option value="115200">115200</option>
+          </select>
         </div>
+        <div x-show="ready">
+          <button
+            style="z-index: 100; position: absolute; right: 5px; top: 5px"
+            @click="async (e) => { await serial_close(); }"
+          >
+            Disconnect
+          </button>
+        </div>
+      </div>
     </template>
 
     <div id="terminal"></div>
 
     <script type="module">
-        import { FitAddon } from './xterm/xterm-addon-fit.js'
+      import { FitAddon } from './xterm/xterm-addon-fit.js'
 
-        var term = new Terminal()
-        term.open(document.getElementById('terminal'));
-        const fitAddon = new FitAddon();
-        term.loadAddon(fitAddon);
-        fitAddon.fit();
+      var term = new Terminal()
+      term.open(document.getElementById('terminal'))
+      const fitAddon = new FitAddon()
+      term.loadAddon(fitAddon)
+      fitAddon.fit()
 
-        term.onKey(e => {
-            Edrys.sendMessage('w', e.key)
-        })
+      term.onKey((e) => {
+        Edrys.sendMessage('w', e.key)
+      })
 
-        Edrys.onMessage(({ from, subject, body }) => {
-            term.write(body.replace('\n', '\r').replace('\r', '\n\r'))
+      Edrys.onMessage(({ from, subject, body }) => {
+        if (subject == 'r') {
+          term.write(body.replace('\n', '\r').replace('\r', '\n\r'))
+        }
 
-            if (subject == 'w' && Edrys.role == 'station')
-                serial_write(body)
-        })
+        if (subject == 'w' && Edrys.role == 'station') serial_write(body)
+      })
     </script>
 
     <script>
-        Edrys.onReady(async () => {
-            while (true) {
-                if (await serial_connect(Edrys.module.config.baud || Edrys.getItem('baud') || 9600)) {
-                    console.log('Auto-connected')
-                    ready = true;
-                    port.addEventListener('disconnect', async e => {
-                        ready = false;
-                        await serial_close()
-                    });
-                    return;
-                }
-            }
-        })
+      Edrys.onReady(async () => {
+        while (true) {
+          if (
+            await serial_connect(
+              Edrys.module.config.baud || Edrys.getItem('baud') || 9600
+            )
+          ) {
+            console.log('Auto-connected')
+            ready = true
+            port.addEventListener('disconnect', async (e) => {
+              ready = false
+              await serial_close()
+            })
+            return
+          }
+        }
+      })
 
-        let connected = false;
-        let port = null
-        async function serial_connect(baudRate, userInitiated = false) {
-            if (connected) return true
+      let connected = false
+      let port = null
+      async function serial_connect(baudRate, userInitiated = false) {
+        if (connected) return true
 
-            if (userInitiated) {
-                port = await navigator.serial.requestPort()
-                return true
-            }
-
-            port = await navigator.serial.getPorts();
-            if ((port !== null) && (Array.isArray(port)) && (port.length > 0)) {
-                port = port[0];
-            } else {
-                return false
-            };
-
-
-            if (port && !connected) {
-                await port.open({ baudRate: baudRate });
-                connected = true
-                setTimeout(e => serial_read(), 1)
-            }
-
-            return connected
+        if (userInitiated) {
+          port = await navigator.serial.requestPort()
+          return true
         }
 
-        let reader = null
-        let readableStreamClosed = null
-        async function serial_read() {
-            if (!port) { connected = false; return; }
-            const textDecoder = new TextDecoderStream();
-            readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
-            reader = textDecoder.readable.getReader();
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) {
-                    reader.releaseLock();
-                    break;
-                }
-                Edrys.sendMessage('r', value);
-            }
+        port = await navigator.serial.getPorts()
+        if (port !== null && Array.isArray(port) && port.length > 0) {
+          port = port[0]
+        } else {
+          return false
         }
 
-        async function serial_close() {
-            window.location.reload()
+        if (port && !connected) {
+          await port.open({ baudRate: baudRate })
+          connected = true
+          setTimeout((e) => serial_read(), 1)
         }
 
-        let writerInit = false;
-        let writer = null
-        let writableStreamClosed = null
-        async function serial_write(text) {
-            if (!port || !connected) { connected = false; return; }
-            if (!writerInit) {
-                const textEncoder = new TextEncoderStream();
-                writableStreamClosed = textEncoder.readable.pipeTo(port.writable);
-                writer = textEncoder.writable.getWriter();
-                writerInit = true
-            }
-            if (writer)
-                await writer.write(text);
-        }
+        return connected
+      }
 
+      let reader = null
+      let readableStreamClosed = null
+      async function serial_read() {
+        if (!port) {
+          connected = false
+          return
+        }
+        const textDecoder = new TextDecoderStream()
+        readableStreamClosed = port.readable.pipeTo(textDecoder.writable)
+        reader = textDecoder.readable.getReader()
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) {
+            reader.releaseLock()
+            break
+          }
+          Edrys.sendMessage('r', value)
+        }
+      }
+
+      async function serial_close() {
+        window.location.reload()
+      }
+
+      let writerInit = false
+      let writer = null
+      let writableStreamClosed = null
+      async function serial_write(text) {
+        if (!port || !connected) {
+          connected = false
+          return
+        }
+        if (!writerInit) {
+          const textEncoder = new TextEncoderStream()
+          writableStreamClosed = textEncoder.readable.pipeTo(port.writable)
+          writer = textEncoder.writable.getWriter()
+          writerInit = true
+        }
+        if (writer) await writer.write(text)
+      }
     </script>
 
     <style>
-        body,
-        html,
-        #terminal,
-        .terminal {
-            height: 100%;
-            width: 100%;
-            max-width: 100%;
-            margin: 0;
-            padding: 0;
-        }
+      body,
+      html,
+      #terminal,
+      .terminal {
+        height: 100%;
+        width: 100%;
+        max-width: 100%;
+        margin: 0;
+        padding: 0;
+      }
 
-        body {
-            overflow: hidden;
-        }
+      body {
+        overflow: hidden;
+      }
     </style>
-</body>
-
+  </body>
 </html>
