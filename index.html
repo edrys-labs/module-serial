@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Permissions-Policy"
+      content="clipboard-read=(self), clipboard-write=(self)"
+    />
 
     <meta
       name="description"
@@ -42,7 +46,7 @@
         x-data="{ baudRate: edrys.module.config.baud || edrys.getItem('baud') || 9600, ready: false }"
         x-effect="e => { edrys.setItem('baud', baudRate) }"
       >
-        <div x-show="!ready">
+        <div x-show="!ready" id="connect">
           <label for="baud" style="float: left; padding: 10px"
             >Baud Rate:</label
           >
@@ -63,7 +67,7 @@
             <option value="115200">115200</option>
           </select>
         </div>
-        <div x-show="ready">
+        <div x-show="ready" id="disconnect">
           <button
             style="z-index: 100; position: absolute; right: 5px; top: 5px"
             @click="async (e) => { await serial_close(); }"
@@ -79,11 +83,53 @@
     <script type="module">
       import { FitAddon } from './xterm/xterm-addon-fit.js'
 
-      var term = new Terminal()
+      var term = new Terminal({
+        cursorBlink: true,
+        macOptionIsMeta: true,
+        scrollback: true,
+      })
+
+      window.term = term
+
       term.open(document.getElementById('terminal'))
       const fitAddon = new FitAddon()
       term.loadAddon(fitAddon)
       fitAddon.fit()
+
+      term.writeln('')
+      term.writeln('You can copy with ctrl+shift+x')
+      term.writeln('You can paste with ctrl+shift+v')
+      term.writeln('')
+      term.writeln('>>>')
+
+      term.attachCustomKeyEventHandler((e) => {
+        if (e.type !== 'keydown') {
+          return true
+        }
+        if (e.ctrlKey && e.shiftKey) {
+          const key = e.key.toLowerCase()
+          if (key === 'v') {
+            // ctrl+shift+v: paste whatever is in the clipboard
+            navigator.clipboard.readText().then((toPaste) => {
+              Edrys.sendMessage('w', toPaste)
+            })
+            return false
+          } else if (key === 'c' || key === 'x') {
+            // ctrl+shift+x: copy whatever is highlighted to clipboard
+
+            // 'x' is used as an alternate to 'c' because ctrl+c is taken
+            // by the terminal (SIGINT) and ctrl+shift+c is taken by the browser
+            // (open devtools).
+            // I'm not aware of ctrl+shift+x being used by anything in the terminal
+            // or browser
+            const toCopy = term.getSelection()
+            navigator.clipboard.writeText(toCopy)
+            term.focus()
+            return false
+          }
+        }
+        return true
+      })
 
       term.onKey((e) => {
         Edrys.sendMessage('w', e.key)
@@ -94,7 +140,9 @@
           term.write(body.replace('\n', '\r').replace('\r', '\n\r'))
         }
 
-        if (subject == 'w' && Edrys.role == 'station') serial_write(body)
+        if (subject == 'w' && Edrys.role == 'station') {
+          serial_write(body)
+        }
       })
     </script>
 
@@ -106,12 +154,15 @@
               Edrys.module.config.baud || Edrys.getItem('baud') || 9600
             )
           ) {
-            console.log('Auto-connected')
+            window.term.writeln('you are connected')
             ready = true
             port.addEventListener('disconnect', async (e) => {
               ready = false
               await serial_close()
             })
+
+            document.getElementById('connect').style.display = 'none'
+            document.getElementById('disconnect').style.display = 'block'
             return
           }
         }
