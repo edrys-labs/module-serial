@@ -8,7 +8,6 @@
       http-equiv="Permissions-Policy"
       content="clipboard-read=(self), clipboard-write=(self)"
     />
-
     <meta
       name="description"
       content="A WebSerial module for live serial comms with stations"
@@ -16,12 +15,10 @@
     <meta name="show-in" content="station" />
     <title>Live WebSerial</title>
 
+    <!-- Edrys module -->
     <script src="https://edrys-labs.github.io/module/edrys.js"></script>
 
-    <script
-      defer
-      src="https://edrys-labs.github.io/module/vendor/alpine.min.js"
-    ></script>
+    <!-- Removed Alpine -->
     <link
       rel="stylesheet"
       href="https://edrys-labs.github.io/module/vendor/water.min.css"
@@ -34,68 +31,50 @@
     <script src="./xterm/xterm.min.js"></script>
     <link rel="stylesheet" href="./xterm/xterm.min.css" />
   </head>
-
   <body>
-    <template
-      x-if="!!edrys"
-      x-data="{ edrys: undefined }"
-      x-init="async e => { Edrys.onUpdate((e) => { edrys = {...e} }) }"
-    >
-      <div
-        x-show="edrys.role == 'station'"
-        x-data="{ baudRate: edrys.module.config.baud || edrys.getItem('baud') || 9600, ready: false }"
-        x-effect="e => { edrys.setItem('baud', baudRate) }"
-      >
-        <div x-show="!ready" id="connect">
-          <label for="baud" style="float: left; padding: 10px"
-            >Baud Rate:</label
-          >
-          <button
-            style="float: right"
-            @click="async (e) => { ready = await serial_connect(baudRate, true); }"
-          >
-            Connect
-          </button>
-          <select id="baud" x-model="baudRate">
-            <option value="1200">1200</option>
-            <option value="2400">2400</option>
-            <option value="4800">4800</option>
-            <option value="9600">9600</option>
-            <option value="19200">19200</option>
-            <option value="38400">38400</option>
-            <option value="57600">57600</option>
-            <option value="115200">115200</option>
-          </select>
-        </div>
-        <div x-show="ready" id="disconnect">
-          <button
-            style="z-index: 100; position: absolute; right: 5px; top: 5px"
-            @click="async (e) => { await serial_close(); }"
-          >
-            Disconnect
-          </button>
-        </div>
+    <!-- Station UI: initially hidden; will be shown if Edrys.role === 'station' -->
+    <div id="station-controls" style="display: none">
+      <div id="connect">
+        <label for="baud" style="float: left; padding: 10px">Baud Rate:</label>
+        <button id="connect-btn" style="float: right">Connect</button>
+        <select id="baud">
+          <option value="1200">1200</option>
+          <option value="2400">2400</option>
+          <option value="4800">4800</option>
+          <option value="9600">9600</option>
+          <option value="19200">19200</option>
+          <option value="38400">38400</option>
+          <option value="57600">57600</option>
+          <option value="115200">115200</option>
+        </select>
       </div>
-    </template>
+      <div id="disconnect" style="display: none">
+        <button
+          id="disconnect-btn"
+          style="z-index: 100; position: absolute; right: 5px; top: 5px"
+        >
+          Disconnect
+        </button>
+      </div>
+    </div>
 
+    <!-- Terminal container -->
     <div id="terminal"></div>
 
     <script type="module">
       import { FitAddon } from './xterm/xterm-addon-fit.js'
 
+      // Initialize terminal
       var term = new Terminal({
         cursorBlink: true,
         macOptionIsMeta: true,
         scrollback: true,
       })
-
       window.term = term
-
       term.open(document.getElementById('terminal'))
       const fitAddon = new FitAddon()
       term.loadAddon(fitAddon)
       fitAddon.fit()
-
       term.writeln('')
       term.writeln('You can copy with ctrl+shift+x')
       term.writeln('You can paste with ctrl+shift+v')
@@ -103,25 +82,17 @@
       term.writeln('>>>')
 
       term.attachCustomKeyEventHandler((e) => {
-        if (e.type !== 'keydown') {
-          return true
-        }
+        if (e.type !== 'keydown') return true
         if (e.ctrlKey && e.shiftKey) {
           const key = e.key.toLowerCase()
           if (key === 'v') {
-            // ctrl+shift+v: paste whatever is in the clipboard
+            // Paste text from clipboard on ctrl+shift+v
             navigator.clipboard.readText().then((toPaste) => {
               Edrys.sendMessage('w', toPaste)
             })
             return false
           } else if (key === 'c' || key === 'x') {
-            // ctrl+shift+x: copy whatever is highlighted to clipboard
-
-            // 'x' is used as an alternate to 'c' because ctrl+c is taken
-            // by the terminal (SIGINT) and ctrl+shift+c is taken by the browser
-            // (open devtools).
-            // I'm not aware of ctrl+shift+x being used by anything in the terminal
-            // or browser
+            // Copy selected text on ctrl+shift+c/x
             const toCopy = term.getSelection()
             navigator.clipboard.writeText(toCopy)
             term.focus()
@@ -139,7 +110,6 @@
         if (subject == 'r') {
           term.write(body.replace('\n', '\r').replace('\r', '\n\r'))
         }
-
         if (subject == 'w' && Edrys.role == 'station') {
           serial_write(body)
         }
@@ -147,40 +117,28 @@
     </script>
 
     <script>
-      Edrys.onReady(async () => {
-        while (true) {
-          if (
-            await serial_connect(
-              Edrys.module.config.baud || Edrys.getItem('baud') || 9600
-            )
-          ) {
-            window.term.writeln('you are connected')
-            ready = true
-            port.addEventListener('disconnect', async (e) => {
-              ready = false
-              await serial_close()
-            })
-
-            document.getElementById('connect').style.display = 'none'
-            document.getElementById('disconnect').style.display = 'block'
-            return
-          }
-        }
-      })
-
+      // Global state for serial connection
       let connected = false
       let port = null
+
       async function serial_connect(baudRate, userInitiated = false) {
         if (connected) return true
 
         if (userInitiated) {
+          // Request a port if user initiated
           port = await navigator.serial.requestPort()
-          return true
+          if (port) {
+            await port.open({ baudRate: baudRate })
+            connected = true
+            setTimeout(() => serial_read(), 1)
+          }
+          return connected
         }
 
-        port = await navigator.serial.getPorts()
-        if (port !== null && Array.isArray(port) && port.length > 0) {
-          port = port[0]
+        // Auto-detect available ports if not user initiated
+        const ports = await navigator.serial.getPorts()
+        if (ports !== null && Array.isArray(ports) && ports.length > 0) {
+          port = ports[0]
         } else {
           return false
         }
@@ -188,7 +146,7 @@
         if (port && !connected) {
           await port.open({ baudRate: baudRate })
           connected = true
-          setTimeout((e) => serial_read(), 1)
+          setTimeout(() => serial_read(), 1)
         }
 
         return connected
@@ -234,6 +192,51 @@
         }
         if (writer) await writer.write(text)
       }
+
+      // Initialize UI and connection logic when Edrys is ready.
+      Edrys.onReady(async () => {
+        if (Edrys.role === 'station') {
+          // Show station controls
+          const stationControls = document.getElementById('station-controls')
+          stationControls.style.display = 'block'
+
+          // Set default baud rate from config, storage, or fallback to 9600
+          const baudSelect = document.getElementById('baud')
+          const defaultBaud =
+            Edrys.module.config.baud || Edrys.getItem('baud') || 9600
+          baudSelect.value = defaultBaud
+
+          // Update stored baud rate when selection changes
+          baudSelect.addEventListener('change', () => {
+            Edrys.setItem('baud', baudSelect.value)
+          })
+
+          // Connect button handler
+          const connectBtn = document.getElementById('connect-btn')
+          connectBtn.addEventListener('click', async () => {
+            const baudRate = parseInt(baudSelect.value)
+            if (await serial_connect(baudRate, true)) {
+              window.term.writeln('you are connected')
+              // Hide connect UI and show disconnect UI
+              document.getElementById('connect').style.display = 'none'
+              document.getElementById('disconnect').style.display = 'block'
+              if (port) {
+                port.addEventListener('disconnect', async () => {
+                  document.getElementById('connect').style.display = 'block'
+                  document.getElementById('disconnect').style.display = 'none'
+                  await serial_close()
+                })
+              }
+            }
+          })
+
+          // Disconnect button handler
+          const disconnectBtn = document.getElementById('disconnect-btn')
+          disconnectBtn.addEventListener('click', async () => {
+            await serial_close()
+          })
+        }
+      })
     </script>
 
     <style>
@@ -247,7 +250,6 @@
         margin: 0;
         padding: 0;
       }
-
       body {
         overflow: hidden;
       }
