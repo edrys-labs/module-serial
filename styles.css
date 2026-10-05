@@ -1,0 +1,72 @@
+html,
+body {
+  height: 100%;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+body {
+  display: flex;
+  flex-direction: column;
+}
+[hidden] {
+  display: none !important;
+}
+
+#bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.25rem 0.5rem;
+}
+
+/* inherit: water.css has a light and a dark variant */
+.status {
+  font-size: small;
+}
+.status > .label {
+  opacity: 0.7;
+}
+.status .badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-weight: bold;
+  color: #fff;
+}
+/* dark enough for white text to clear WCAG AA */
+.status .badge.on {
+  background-color: #1f7a45;
+}
+.status .badge.off {
+  background-color: #b8384a;
+}
+.status .badge.wait {
+  background-color: #6b6b6b;
+}
+
+.controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: small;
+}
+.controls label,
+.controls select,
+.controls button {
+  margin: 0;
+  white-space: nowrap;
+}
+
+/* fills the rest of the iframe below the header; the background must
+   match the xterm default (#000) or the padding shows a seam */
+#terminal {
+  flex: 1;
+  min-height: 0;
+  background: #000;
+  padding: 6px 0 6px 6px;
+}
