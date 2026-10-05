@@ -32,11 +32,16 @@
     <link rel="stylesheet" href="./xterm/xterm.min.css" />
   </head>
   <body>
-    <!-- Station UI: initially hidden; will be shown if Edrys.role === 'station' -->
-    <div id="station-controls" style="display: none">
-      <div id="connect">
-        <label for="baud" style="float: left; padding: 10px">Baud Rate:</label>
-        <button id="connect-btn" style="float: right">Connect</button>
+    <header id="bar">
+      <!-- Device status, shared by the station via state, visible to everyone -->
+      <span class="status">
+        <span class="label">Device</span>
+        <span id="badge" class="badge wait">loading…</span>
+      </span>
+
+      <!-- Station UI: initially hidden; will be shown if Edrys.role === 'station' -->
+      <span id="station-controls" class="controls" hidden>
+        <label for="baud">Baud rate</label>
         <select id="baud">
           <option value="1200">1200</option>
           <option value="2400">2400</option>
@@ -47,16 +52,10 @@
           <option value="57600">57600</option>
           <option value="115200">115200</option>
         </select>
-      </div>
-      <div id="disconnect" style="display: none">
-        <button
-          id="disconnect-btn"
-          style="z-index: 100; position: absolute; right: 5px; top: 5px"
-        >
-          Disconnect
-        </button>
-      </div>
-    </div>
+        <button id="connect-btn">Connect</button>
+        <button id="disconnect-btn" hidden>Disconnect</button>
+      </span>
+    </header>
 
     <!-- Terminal container -->
     <div id="terminal"></div>
@@ -68,18 +67,19 @@
       var term = new Terminal({
         cursorBlink: true,
         macOptionIsMeta: true,
-        scrollback: true,
+        scrollback: 5000,
+        // devices send \n, \r\n or a mix; let xterm turn every \n into \r\n
+        convertEol: true,
       })
       window.term = term
-      term.open(document.getElementById('terminal'))
+      const terminalEl = document.getElementById('terminal')
+      term.open(terminalEl)
       const fitAddon = new FitAddon()
       term.loadAddon(fitAddon)
       fitAddon.fit()
-      term.writeln('')
-      term.writeln('You can copy with ctrl+shift+x')
-      term.writeln('You can paste with ctrl+shift+v')
-      term.writeln('')
-      term.writeln('>>>')
+      // refit when the iframe or the header row changes size
+      new ResizeObserver(() => fitAddon.fit()).observe(terminalEl)
+      // status messages are written by render_status() once Edrys is ready
 
       term.attachCustomKeyEventHandler((e) => {
         if (e.type !== 'keydown') return true
@@ -88,6 +88,7 @@
           if (key === 'v') {
             // Paste text from clipboard on ctrl+shift+v
             navigator.clipboard.readText().then((toPaste) => {
+              warn_if_disconnected()
               Edrys.sendMessage('w', toPaste)
             })
             return false
@@ -103,12 +104,13 @@
       })
 
       term.onKey((e) => {
+        warn_if_disconnected()
         Edrys.sendMessage('w', e.key)
       })
 
       Edrys.onMessage(({ from, subject, body }) => {
         if (subject == 'r') {
-          term.write(body.replace('\n', '\r').replace('\r', '\n\r'))
+          term.write(body)
         }
         if (subject == 'w' && Edrys.role == 'station') {
           serial_write(body)
@@ -155,24 +157,34 @@
       let reader = null
       let readableStreamClosed = null
       async function serial_read() {
-        if (!port) {
-          connected = false
-          return
-        }
-        const textDecoder = new TextDecoderStream()
-        readableStreamClosed = port.readable.pipeTo(textDecoder.writable)
-        reader = textDecoder.readable.getReader()
-        while (true) {
-          const { value, done } = await reader.read()
-          if (done) {
+        // Errors like BreakError or FramingError (wrong baud, device reset)
+        // only end the current stream; port.readable is replaced afterwards,
+        // so keep reading until the port itself is gone.
+        while (port && port.readable) {
+          const textDecoder = new TextDecoderStream()
+          readableStreamClosed = port.readable
+            .pipeTo(textDecoder.writable)
+            .catch(() => {})
+          reader = textDecoder.readable.getReader()
+          try {
+            while (true) {
+              const { value, done } = await reader.read()
+              if (done) return
+              if (value) Edrys.sendMessage('r', value)
+            }
+          } catch (error) {
+            Edrys.sendMessage('r', `\n[serial error: ${error.message}]\n`)
+          } finally {
             reader.releaseLock()
-            break
           }
-          Edrys.sendMessage('r', value)
+          await readableStreamClosed
         }
+        connected = false
+        set_status('off')
       }
 
       async function serial_close() {
+        set_status('off')
         window.location.reload()
       }
 
@@ -190,15 +202,88 @@
           writer = textEncoder.writable.getWriter()
           writerInit = true
         }
-        if (writer) await writer.write(text)
+        try {
+          if (writer) await writer.write(text)
+        } catch (error) {
+          Edrys.sendMessage('r', `\n[write failed: ${error.message}]\n`)
+        }
+      }
+
+      // Device status, written by the station and stored in the room state
+      // so that every peer, including late joiners, can show it.
+      const STATUS_KEY = 'serial-status'
+      const STATUS_TEXT = {
+        on: 'connected',
+        off: 'not connected',
+        wait: 'connecting…',
+      }
+      let warnedDisconnected = false
+      let lastState = null
+
+      function set_status(state, baud = null) {
+        if (!Edrys.ready) return
+        Edrys.getState(STATUS_KEY, 'Value', { state, baud })
+      }
+
+      function get_status() {
+        if (!Edrys.ready) return null
+        return Edrys.getState(STATUS_KEY, 'Value') || { state: 'off' }
+      }
+
+      function render_status() {
+        const status = get_status()
+        if (!status) return
+        const badge = document.getElementById('badge')
+        badge.className = 'badge ' + status.state
+        badge.textContent =
+          STATUS_TEXT[status.state] +
+          (status.state === 'on' && status.baud ? ` · ${status.baud} baud` : '')
+        if (status.state === 'on') warnedDisconnected = false
+
+        // Explain the state in the terminal, once per change
+        if (status.state !== lastState) {
+          write_status_message(status, lastState)
+          lastState = status.state
+        }
+      }
+
+      function write_status_message(status, previous) {
+        const term = window.term
+        if (status.state === 'on') {
+          term.writeln(`\r\nDevice connected (${status.baud} baud).`)
+          term.writeln('Copy with ctrl+shift+x, paste with ctrl+shift+v.\r\n')
+        } else if (status.state === 'off') {
+          if (previous === 'on') term.writeln('\r\n[device disconnected]')
+          term.writeln(
+            Edrys.role === 'station'
+              ? 'No device connected. Choose a baud rate and click Connect.'
+              : 'Waiting for the station to connect a device…'
+          )
+        }
+      }
+
+      // Called on input: tell the user once that nothing will reach the
+      // device, instead of dropping keystrokes silently.
+      function warn_if_disconnected() {
+        const status = get_status()
+        if (!status || status.state === 'on' || warnedDisconnected) return
+        warnedDisconnected = true
+        window.term.writeln(
+          '\r\n[no device connected at the station, input is not sent]'
+        )
       }
 
       // Initialize UI and connection logic when Edrys is ready.
       Edrys.onReady(async () => {
+        // onUpdate fires on any room change; reading one value is cheap
+        Edrys.onUpdate(render_status)
+
         if (Edrys.role === 'station') {
+          // After a reload the port is closed, whatever the state says
+          set_status('off')
+
           // Show station controls
-          const stationControls = document.getElementById('station-controls')
-          stationControls.style.display = 'block'
+          document.getElementById('station-controls').hidden = false
 
           // Set default baud rate from config, storage, or fallback to 9600
           const baudSelect = document.getElementById('baud')
@@ -213,45 +298,111 @@
 
           // Connect button handler
           const connectBtn = document.getElementById('connect-btn')
+          const disconnectBtn = document.getElementById('disconnect-btn')
           connectBtn.addEventListener('click', async () => {
             const baudRate = parseInt(baudSelect.value)
-            if (await serial_connect(baudRate, true)) {
-              window.term.writeln('you are connected')
-              // Hide connect UI and show disconnect UI
-              document.getElementById('connect').style.display = 'none'
-              document.getElementById('disconnect').style.display = 'block'
-              if (port) {
-                port.addEventListener('disconnect', async () => {
-                  document.getElementById('connect').style.display = 'block'
-                  document.getElementById('disconnect').style.display = 'none'
-                  await serial_close()
-                })
+            connectBtn.disabled = true
+            set_status('wait')
+            try {
+              if (await serial_connect(baudRate, true)) {
+                set_status('on', baudRate)
+                // Swap the connect controls for the disconnect button
+                baudSelect.disabled = true
+                connectBtn.hidden = true
+                disconnectBtn.hidden = false
+                port.addEventListener('disconnect', serial_close)
+              } else {
+                set_status('off')
               }
+            } catch (error) {
+              // e.g. the port picker was cancelled or the port is busy
+              set_status('off')
+              window.term.writeln(`\r\n[could not connect: ${error.message}]`)
+            } finally {
+              connectBtn.disabled = false
             }
           })
 
           // Disconnect button handler
-          const disconnectBtn = document.getElementById('disconnect-btn')
-          disconnectBtn.addEventListener('click', async () => {
-            await serial_close()
-          })
+          disconnectBtn.addEventListener('click', serial_close)
         }
+
+        render_status()
       })
     </script>
 
     <style>
-      body,
       html,
-      #terminal,
-      .terminal {
+      body {
         height: 100%;
         width: 100%;
         max-width: 100%;
         margin: 0;
         padding: 0;
+        overflow: hidden;
       }
       body {
-        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      [hidden] {
+        display: none !important;
+      }
+
+      #bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem 1rem;
+        padding: 0.25rem 0.5rem;
+      }
+
+      /* inherit: water.css has a light and a dark variant */
+      .status {
+        font-size: small;
+      }
+      .status > .label {
+        opacity: 0.7;
+      }
+      .status .badge {
+        display: inline-block;
+        padding: 0.1rem 0.5rem;
+        border-radius: 999px;
+        font-weight: bold;
+        color: #fff;
+      }
+      /* dark enough for white text to clear WCAG AA */
+      .status .badge.on {
+        background-color: #1f7a45;
+      }
+      .status .badge.off {
+        background-color: #b8384a;
+      }
+      .status .badge.wait {
+        background-color: #6b6b6b;
+      }
+
+      .controls {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: small;
+      }
+      .controls label,
+      .controls select,
+      .controls button {
+        margin: 0;
+        white-space: nowrap;
+      }
+
+      /* fills the rest of the iframe below the header; the background must
+         match the xterm default (#000) or the padding shows a seam */
+      #terminal {
+        flex: 1;
+        min-height: 0;
+        background: #000;
+        padding: 6px 0 6px 6px;
       }
     </style>
   </body>
