@@ -25,6 +25,8 @@ const term = new Terminal({
   // devices send \n, \r\n or a mix; let xterm turn every \n into \r\n
   convertEol: true,
 })
+// for debugging in the console, and read by edrys-module-tests
+window.term = term
 const terminalEl = document.getElementById('terminal')
 term.open(terminalEl)
 const fitAddon = new FitAddon()
