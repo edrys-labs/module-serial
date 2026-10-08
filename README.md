@@ -88,3 +88,7 @@ const status = Edrys.getState('serial-status', 'Value')
 - Only one serial module per station room: two instances would share the same message subjects and status key.
 - Disconnecting, or unplugging the device, reloads the module on the station; click **Connect** again to
   reconnect.
+
+## License
+
+[MIT](LICENSE) © edrys-labs
